@@ -28,6 +28,7 @@ open_trade = None
 latest_market = None
 trade_history = []
 trade_id = 1
+used_zones = []
 
 
 def send_telegram(message: str):
@@ -42,7 +43,6 @@ def send_telegram(message: str):
             "chat_id": TELEGRAM_CHAT_ID,
             "text": message
         })
-
         print("Telegram status:", response.status_code)
         print("Telegram response:", response.text)
 
@@ -51,8 +51,6 @@ def send_telegram(message: str):
 
 
 def update_trade_history(trade_id_value, result, profit_points):
-    global trade_history
-
     for trade in trade_history:
         if trade["id"] == trade_id_value:
             trade["result"] = result
@@ -60,22 +58,48 @@ def update_trade_history(trade_id_value, result, profit_points):
             return
 
 
-def check_trade(price: float):
+def check_trade_by_candle(high: float, low: float, close: float):
     global open_trade
 
     if open_trade is None:
         return
 
     side = open_trade["side"]
-    tp1 = open_trade["tp1"]
-    tp2 = open_trade["tp2"]
-    sl = open_trade["sl"]
+    tp1 = float(open_trade["tp1"])
+    tp2 = float(open_trade["tp2"])
+    sl  = float(open_trade["sl"])
+
+    print("CHECKING OPEN TRADE:", open_trade)
+    print("CANDLE:", high, low, close)
 
     if side == "BUY":
-        if not open_trade["tp1_hit"] and price >= tp1:
-            open_trade["tp1_hit"] = True
-            update_trade_history(open_trade["id"], "TP1", 80)
+        if low <= sl:
+            update_trade_history(open_trade["id"], "SL", -open_trade["risk_points"])
+            send_telegram(
+                f"❌ SL HIT\n\n"
+                f"Symbol: {open_trade['symbol']}\n"
+                f"Side: BUY\n"
+                f"Entry: {open_trade['entry']}\n"
+                f"SL: {sl}"
+            )
+            open_trade = None
+            return
 
+        if high >= tp2:
+            update_trade_history(open_trade["id"], "TP2", open_trade["reward_points"])
+            send_telegram(
+                f"✅ TP2 HIT\n\n"
+                f"Symbol: {open_trade['symbol']}\n"
+                f"Side: BUY\n"
+                f"Entry: {open_trade['entry']}\n"
+                f"TP2: {tp2}"
+            )
+            open_trade = None
+            return
+
+        if not open_trade["tp1_hit"] and high >= tp1:
+            open_trade["tp1_hit"] = True
+            update_trade_history(open_trade["id"], "TP1", open_trade["reward_points"] / 2)
             send_telegram(
                 f"✅ TP1 HIT\n\n"
                 f"Symbol: {open_trade['symbol']}\n"
@@ -83,40 +107,35 @@ def check_trade(price: float):
                 f"Entry: {open_trade['entry']}\n"
                 f"TP1: {tp1}"
             )
-
-        if price >= tp2:
-            update_trade_history(open_trade["id"], "TP2", 160)
-
-            send_telegram(
-                f"✅ TP2 HIT - Trade Closed\n\n"
-                f"Symbol: {open_trade['symbol']}\n"
-                f"Side: BUY\n"
-                f"Entry: {open_trade['entry']}\n"
-                f"TP2: {tp2}"
-            )
-
-            open_trade = None
-            return
-
-        if price <= sl:
-            update_trade_history(open_trade["id"], "SL", -80)
-
-            send_telegram(
-                f"❌ SL HIT - Trade Closed\n\n"
-                f"Symbol: {open_trade['symbol']}\n"
-                f"Side: BUY\n"
-                f"Entry: {open_trade['entry']}\n"
-                f"SL: {sl}"
-            )
-
-            open_trade = None
-            return
 
     if side == "SELL":
-        if not open_trade["tp1_hit"] and price <= tp1:
-            open_trade["tp1_hit"] = True
-            update_trade_history(open_trade["id"], "TP1", 80)
+        if high >= sl:
+            update_trade_history(open_trade["id"], "SL", -open_trade["risk_points"])
+            send_telegram(
+                f"❌ SL HIT\n\n"
+                f"Symbol: {open_trade['symbol']}\n"
+                f"Side: SELL\n"
+                f"Entry: {open_trade['entry']}\n"
+                f"SL: {sl}"
+            )
+            open_trade = None
+            return
 
+        if low <= tp2:
+            update_trade_history(open_trade["id"], "TP2", open_trade["reward_points"])
+            send_telegram(
+                f"✅ TP2 HIT\n\n"
+                f"Symbol: {open_trade['symbol']}\n"
+                f"Side: SELL\n"
+                f"Entry: {open_trade['entry']}\n"
+                f"TP2: {tp2}"
+            )
+            open_trade = None
+            return
+
+        if not open_trade["tp1_hit"] and low <= tp1:
+            open_trade["tp1_hit"] = True
+            update_trade_history(open_trade["id"], "TP1", open_trade["reward_points"] / 2)
             send_telegram(
                 f"✅ TP1 HIT\n\n"
                 f"Symbol: {open_trade['symbol']}\n"
@@ -124,89 +143,84 @@ def check_trade(price: float):
                 f"Entry: {open_trade['entry']}\n"
                 f"TP1: {tp1}"
             )
-
-        if price <= tp2:
-            update_trade_history(open_trade["id"], "TP2", 160)
-
-            send_telegram(
-                f"✅ TP2 HIT - Trade Closed\n\n"
-                f"Symbol: {open_trade['symbol']}\n"
-                f"Side: SELL\n"
-                f"Entry: {open_trade['entry']}\n"
-                f"TP2: {tp2}"
-            )
-
-            open_trade = None
-            return
-
-        if price >= sl:
-            update_trade_history(open_trade["id"], "SL", -80)
-
-            send_telegram(
-                f"❌ SL HIT - Trade Closed\n\n"
-                f"Symbol: {open_trade['symbol']}\n"
-                f"Side: SELL\n"
-                f"Entry: {open_trade['entry']}\n"
-                f"SL: {sl}"
-            )
-
-            open_trade = None
-            return
 
 
 def ask_openai(data: dict):
     prompt = f"""
-You are a strict trading decision engine.
+You are a strict professional trading decision engine.
 
-Use ONLY the provided JSON market data.
-Do NOT invent zones.
-Do NOT assume missing data.
-Return NO_TRADE if any required condition is missing.
+RULES:
+- Use ONLY data from the provided JSON. Do NOT invent or assume any zone.
+- Return NO_TRADE immediately if ANY required condition is missing.
+- Do NOT reuse a zone that exists in used_zones.
+- Price "touching" a zone means: candle low enters the zone top/bottom for BUY, or candle high enters the zone for SELL.
+- Bullish FVG is valid only if active=true.
+- Bearish FVG is valid only if active=true.
+- Bullish OB is valid only if breaker=false.
+- Bearish OB is valid only if breaker=false.
+- The zone_key must be the ID of the FVG or OB that triggered the signal.
+- Explain step by step why each condition is met or not.
 
-Very important:
-- Only one trade is allowed.
-- Trend is the most important filter.
-- FVG or OB is valid ONLY if it overlaps the SAME support/resistance zone.
-- Do not trade if price is far from the relevant support/resistance zone.
-- Near means price is within 80 points maximum from the zone.
-- Ignore broken FVG/OB unless still active.
-- If liquidity is already broken, treat it as sweep evidence only if direction matches the setup.
-- If data is unclear, return NO_TRADE.
+=== BUY SETUP 1 — Trend + Bullish Zone ===
+ALL of the following must be true:
+1. trend = "bullish"
+2. At least one active bullish_fvg OR one bullish_ob with breaker=false exists
+3. Current candle low has touched or entered that bullish zone (low <= zone top AND low >= zone bottom)
+4. entry = zone bottom (or zone midpoint if zone is wide)
+5. SL = zone bottom minus a small buffer
+6. TP1 = entry + risk_points, TP2 = entry + (2 x risk_points)
+7. risk_points >= 40, reward_points (TP2 distance) >= 80
 
-BUY SETUP 1:
-1. bullish trend
-2. price near support
-3. support overlaps bullish FVG or bullish OB
-4. same support area
+=== BUY SETUP 2 — Liquidity Sweep + Breakout ===
+ALL of the following must be true:
+1. trend = "bullish"
+2. buyside_liquidity list is not empty and at least one entry has broken=false
+3. resistance_broken = true (a resistance was just broken this candle)
+4. entry = close of current candle (breakout candle)
+5. SL = bottom of broken resistance zone
+6. TP1 = entry + risk_points, TP2 = entry + (2 x risk_points)
+7. risk_points >= 30, reward_points >= 60
 
-BUY SETUP 2:
-1. bullish trend
-2. sellside liquidity sweep
-3. break nearest resistance
+=== SELL SETUP 1 — Trend + Bearish Zone ===
+ALL of the following must be true:
+1. trend = "bearish"
+2. At least one active bearish_fvg OR one bearish_ob with breaker=false exists
+3. Current candle high has touched or entered that bearish zone (high >= zone bottom AND high <= zone top)
+4. entry = zone top (or zone midpoint if zone is wide)
+5. SL = zone top plus a small buffer
+6. TP1 = entry - risk_points, TP2 = entry - (2 x risk_points)
+7. risk_points >= 40, reward_points (TP2 distance) >= 80
 
-SELL SETUP 1:
-1. bearish trend
-2. price near resistance
-3. resistance overlaps bearish FVG or bearish OB
-4. same resistance area
+=== SELL SETUP 2 — Liquidity Sweep + Breakdown ===
+ALL of the following must be true:
+1. trend = "bearish"
+2. sellside_liquidity list is not empty and at least one entry has broken=false
+3. support_broken = true (a support was just broken this candle)
+4. entry = close of current candle (breakdown candle)
+5. SL = top of broken support zone
+6. TP1 = entry - risk_points, TP2 = entry - (2 x risk_points)
+7. risk_points >= 30, reward_points >= 60
 
-SELL SETUP 2:
-1. bearish trend
-2. buyside liquidity sweep
-3. break nearest support
+=== PENDING BUY — 15M Only ===
+ALL of the following must be true:
+1. timeframe = "15"
+2. trend = "bullish"
+3. bullish_ob exists with breaker=false
+4. entry = bullish_ob bottom
+5. SL = bullish_ob bottom minus buffer
+6. TP2 distance >= 120 points
 
-Risk:
-BUY:
-SL = entry - 80
-TP1 = entry + 80
-TP2 = entry + 160
+=== PENDING SELL — 15M Only ===
+ALL of the following must be true:
+1. timeframe = "15"
+2. trend = "bearish"
+3. bearish_ob exists with breaker=false
+4. entry = bearish_ob top
+5. SL = bearish_ob top plus buffer
+6. TP2 distance >= 120 points
 
-SELL:
-SL = entry + 80
-TP1 = entry - 80
-TP2 = entry - 160
-
-Return JSON only.
+Used zones (do NOT reuse):
+{json.dumps(used_zones, ensure_ascii=False)}
 
 Market data:
 {json.dumps(data, ensure_ascii=False)}
@@ -227,21 +241,20 @@ Market data:
                             "type": "string",
                             "enum": ["BUY", "SELL", "NO_TRADE"]
                         },
-                        "setup": {"type": "string"},
-                        "entry": {"type": "number"},
-                        "sl": {"type": "number"},
-                        "tp1": {"type": "number"},
-                        "tp2": {"type": "number"},
-                        "reason": {"type": "string"}
+                        "setup":          {"type": "string"},
+                        "entry":          {"type": "number"},
+                        "sl":             {"type": "number"},
+                        "tp1":            {"type": "number"},
+                        "tp2":            {"type": "number"},
+                        "risk_points":    {"type": "number"},
+                        "reward_points":  {"type": "number"},
+                        "zone_key":       {"type": "string"},
+                        "reason":         {"type": "string"}
                     },
                     "required": [
-                        "signal",
-                        "setup",
-                        "entry",
-                        "sl",
-                        "tp1",
-                        "tp2",
-                        "reason"
+                        "signal", "setup", "entry", "sl",
+                        "tp1", "tp2", "risk_points", "reward_points",
+                        "zone_key", "reason"
                     ],
                     "additionalProperties": False
                 }
@@ -254,9 +267,7 @@ Market data:
 
 @app.get("/")
 def home():
-    return {
-        "status": "backend is running"
-    }
+    return {"status": "backend is running"}
 
 
 @app.get("/dashboard")
@@ -266,58 +277,11 @@ def dashboard():
         "open_trade": open_trade,
         "latest_market": latest_market,
         "trades": trade_history,
+        "used_zones": used_zones,
         "telegram_configured": bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID)
     }
 
-def check_trade_by_candle(high: float, low: float, close: float):
-    global open_trade
 
-    if open_trade is None:
-        return
-
-    print("CHECKING OPEN TRADE:", open_trade)
-    print("CANDLE high:", high, "low:", low, "close:", close)
-
-    side = open_trade["side"]
-    tp1 = open_trade["tp1"]
-    tp2 = open_trade["tp2"]
-    sl = open_trade["sl"]
-
-    if side == "BUY":
-        if low <= sl:
-            update_trade_history(open_trade["id"], "SL", -80)
-            send_telegram(f"❌ SL HIT\n\nSymbol: {open_trade['symbol']}\nSide: BUY\nEntry: {open_trade['entry']}\nSL: {sl}")
-            open_trade = None
-            return
-
-        if high >= tp2:
-            update_trade_history(open_trade["id"], "TP2", 160)
-            send_telegram(f"✅ TP2 HIT\n\nSymbol: {open_trade['symbol']}\nSide: BUY\nEntry: {open_trade['entry']}\nTP2: {tp2}")
-            open_trade = None
-            return
-
-        if not open_trade["tp1_hit"] and high >= tp1:
-            open_trade["tp1_hit"] = True
-            update_trade_history(open_trade["id"], "TP1", 80)
-            send_telegram(f"✅ TP1 HIT\n\nSymbol: {open_trade['symbol']}\nSide: BUY\nEntry: {open_trade['entry']}\nTP1: {tp1}")
-
-    if side == "SELL":
-        if high >= sl:
-            update_trade_history(open_trade["id"], "SL", -80)
-            send_telegram(f"❌ SL HIT\n\nSymbol: {open_trade['symbol']}\nSide: SELL\nEntry: {open_trade['entry']}\nSL: {sl}")
-            open_trade = None
-            return
-
-        if low <= tp2:
-            update_trade_history(open_trade["id"], "TP2", 160)
-            send_telegram(f"✅ TP2 HIT\n\nSymbol: {open_trade['symbol']}\nSide: SELL\nEntry: {open_trade['entry']}\nTP2: {tp2}")
-            open_trade = None
-            return
-
-        if not open_trade["tp1_hit"] and low <= tp1:
-            open_trade["tp1_hit"] = True
-            update_trade_history(open_trade["id"], "TP1", 80)
-            send_telegram(f"✅ TP1 HIT\n\nSymbol: {open_trade['symbol']}\nSide: SELL\nEntry: {open_trade['entry']}\nTP1: {tp1}")
 @app.get("/test-telegram")
 def test_telegram():
     send_telegram("✅ Telegram test message from Trading AI backend")
@@ -333,16 +297,16 @@ async def webhook(request: Request):
     global latest_market
     global trade_history
     global trade_id
+    global used_zones
 
     data = await request.json()
     latest_market = data
 
     print("TradingView data:", data)
 
-    high = float(data.get("high"))
-    low = float(data.get("low"))
+    high  = float(data.get("high"))
+    low   = float(data.get("low"))
     close = float(data.get("close"))
-
 
     check_trade_by_candle(high, low, close)
 
@@ -356,33 +320,54 @@ async def webhook(request: Request):
 
     print("AI decision:", decision)
 
-    if decision["signal"] in ["BUY", "SELL"]:
-        open_trade = {
-            "id": trade_id,
-            "symbol": data.get("symbol"),
-            "side": decision["signal"],
-            "setup": decision["setup"],
-            "entry": decision["entry"],
-            "sl": decision["sl"],
-            "tp1": decision["tp1"],
-            "tp2": decision["tp2"],
-            "tp1_hit": False,
-            "reason": decision["reason"]
+    if decision["signal"] == "NO_TRADE":
+        return {
+            "status": "no_trade",
+            "decision": decision
         }
 
+    if decision["zone_key"] in used_zones:
+        return {
+            "status": "zone_already_used",
+            "zone_key": decision["zone_key"],
+            "decision": decision
+        }
+
+    if decision["signal"] in ["BUY", "SELL"]:
+        open_trade = {
+            "id":           trade_id,
+            "symbol":       data.get("symbol"),
+            "side":         decision["signal"],
+            "setup":        decision["setup"],
+            "entry":        decision["entry"],
+            "sl":           decision["sl"],
+            "tp1":          decision["tp1"],
+            "tp2":          decision["tp2"],
+            "tp1_hit":      False,
+            "risk_points":  decision["risk_points"],
+            "reward_points":decision["reward_points"],
+            "zone_key":     decision["zone_key"],
+            "reason":       decision["reason"]
+        }
+
+        used_zones.append(decision["zone_key"])
+
         trade_history.insert(0, {
-            "id": trade_id,
-            "symbol": data.get("symbol"),
-            "side": decision["signal"],
-            "setup": decision["setup"],
-            "entry": decision["entry"],
-            "sl": decision["sl"],
-            "tp1": decision["tp1"],
-            "tp2": decision["tp2"],
-            "result": "OPEN",
-            "profit_points": 0,
-            "created_at": str(data.get("time")),
-            "reason": decision["reason"]
+            "id":           trade_id,
+            "symbol":       data.get("symbol"),
+            "side":         decision["signal"],
+            "setup":        decision["setup"],
+            "entry":        decision["entry"],
+            "sl":           decision["sl"],
+            "tp1":          decision["tp1"],
+            "tp2":          decision["tp2"],
+            "risk_points":  decision["risk_points"],
+            "reward_points":decision["reward_points"],
+            "zone_key":     decision["zone_key"],
+            "result":       "OPEN",
+            "profit_points":0,
+            "created_at":   str(data.get("time")),
+            "reason":       decision["reason"]
         })
 
         trade_id += 1
@@ -390,14 +375,16 @@ async def webhook(request: Request):
         msg = (
             f"🚨 NEW TRADE\n\n"
             f"Symbol: {data.get('symbol')}\n"
-            f"Side: {decision['signal']}\n\n"
+            f"Side: {decision['signal']}\n"
             f"Setup: {decision['setup']}\n\n"
             f"Entry: {decision['entry']}\n"
             f"SL: {decision['sl']}\n"
             f"TP1: {decision['tp1']}\n"
             f"TP2: {decision['tp2']}\n\n"
-            f"Reason:\n"
-            f"{decision['reason']}"
+            f"Risk Points: {decision['risk_points']}\n"
+            f"Reward Points: {decision['reward_points']}\n"
+            f"Zone: {decision['zone_key']}\n\n"
+            f"Reason:\n{decision['reason']}"
         )
 
         send_telegram(msg)
