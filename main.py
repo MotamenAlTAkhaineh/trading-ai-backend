@@ -67,7 +67,7 @@ def check_trade_by_candle(high: float, low: float, close: float):
     side = open_trade["side"]
     tp1 = float(open_trade["tp1"])
     tp2 = float(open_trade["tp2"])
-    sl  = float(open_trade["sl"])
+    sl = float(open_trade["sl"])
 
     print("CHECKING OPEN TRADE:", open_trade)
     print("CANDLE:", high, low, close)
@@ -150,6 +150,14 @@ def ask_openai(data: dict):
 You are a strict professional trading decision engine.
 
 RULES:
+
+CRITICAL FINAL DECISION RULE:
+If your analysis says any condition failed, zone not touched, no overlap, invalid RR, entry missed, resistance too close, support too close, or setup is incomplete, then signal MUST be "NO_TRADE".
+
+Never return BUY or SELL while the reason says the final conclusion is NO_TRADE.
+
+BUY or SELL is allowed only if every required condition is fully satisfied.
+
 - Use ONLY data from the provided JSON. Do NOT invent or assume any zone.
 - Return NO_TRADE immediately if ANY required condition is missing.
 - Do NOT reuse a zone that exists in used_zones.
@@ -165,18 +173,18 @@ RULES:
 ALL of the following must be true:
 1. trend = "bullish"
 2. At least one active bullish_fvg OR one bullish_ob with breaker=false exists
-3. Current candle low has touched or entered that bullish zone (low <= zone top AND low >= zone bottom)
-4. entry = zone bottom (or zone midpoint if zone is wide)
-5. SL = zone bottom minus a small buffer
+3. Current candle low has touched or entered that bullish zone: low <= zone top AND low >= zone bottom
+4. entry = zone bottom or zone midpoint if zone is wide
+5. SL = zone bottom minus buffer
 6. TP1 = entry + risk_points, TP2 = entry + (2 x risk_points)
-7. risk_points >= 40, reward_points (TP2 distance) >= 80
+7. risk_points >= 40, reward_points >= 80
 
 === BUY SETUP 2 — Liquidity Sweep + Breakout ===
 ALL of the following must be true:
 1. trend = "bullish"
 2. buyside_liquidity list is not empty and at least one entry has broken=false
-3. resistance_broken = true (a resistance was just broken this candle)
-4. entry = close of current candle (breakout candle)
+3. resistance_broken = true
+4. entry = close of current candle
 5. SL = bottom of broken resistance zone
 6. TP1 = entry + risk_points, TP2 = entry + (2 x risk_points)
 7. risk_points >= 30, reward_points >= 60
@@ -185,18 +193,18 @@ ALL of the following must be true:
 ALL of the following must be true:
 1. trend = "bearish"
 2. At least one active bearish_fvg OR one bearish_ob with breaker=false exists
-3. Current candle high has touched or entered that bearish zone (high >= zone bottom AND high <= zone top)
-4. entry = zone top (or zone midpoint if zone is wide)
-5. SL = zone top plus a small buffer
+3. Current candle high has touched or entered that bearish zone: high >= zone bottom AND high <= zone top
+4. entry = zone top or zone midpoint if zone is wide
+5. SL = zone top plus buffer
 6. TP1 = entry - risk_points, TP2 = entry - (2 x risk_points)
-7. risk_points >= 40, reward_points (TP2 distance) >= 80
+7. risk_points >= 40, reward_points >= 80
 
 === SELL SETUP 2 — Liquidity Sweep + Breakdown ===
 ALL of the following must be true:
 1. trend = "bearish"
 2. sellside_liquidity list is not empty and at least one entry has broken=false
-3. support_broken = true (a support was just broken this candle)
-4. entry = close of current candle (breakdown candle)
+3. support_broken = true
+4. entry = close of current candle
 5. SL = top of broken support zone
 6. TP1 = entry - risk_points, TP2 = entry - (2 x risk_points)
 7. risk_points >= 30, reward_points >= 60
@@ -219,7 +227,7 @@ ALL of the following must be true:
 5. SL = bearish_ob top plus buffer
 6. TP2 distance >= 120 points
 
-Used zones (do NOT reuse):
+Used zones:
 {json.dumps(used_zones, ensure_ascii=False)}
 
 Market data:
@@ -241,15 +249,15 @@ Market data:
                             "type": "string",
                             "enum": ["BUY", "SELL", "NO_TRADE"]
                         },
-                        "setup":          {"type": "string"},
-                        "entry":          {"type": "number"},
-                        "sl":             {"type": "number"},
-                        "tp1":            {"type": "number"},
-                        "tp2":            {"type": "number"},
-                        "risk_points":    {"type": "number"},
-                        "reward_points":  {"type": "number"},
-                        "zone_key":       {"type": "string"},
-                        "reason":         {"type": "string"}
+                        "setup": {"type": "string"},
+                        "entry": {"type": "number"},
+                        "sl": {"type": "number"},
+                        "tp1": {"type": "number"},
+                        "tp2": {"type": "number"},
+                        "risk_points": {"type": "number"},
+                        "reward_points": {"type": "number"},
+                        "zone_key": {"type": "string"},
+                        "reason": {"type": "string"}
                     },
                     "required": [
                         "signal", "setup", "entry", "sl",
@@ -304,8 +312,8 @@ async def webhook(request: Request):
 
     print("TradingView data:", data)
 
-    high  = float(data.get("high"))
-    low   = float(data.get("low"))
+    high = float(data.get("high"))
+    low = float(data.get("low"))
     close = float(data.get("close"))
 
     check_trade_by_candle(high, low, close)
@@ -319,6 +327,39 @@ async def webhook(request: Request):
     decision = ask_openai(data)
 
     print("AI decision:", decision)
+
+    reason_lower = decision["reason"].lower()
+
+    bad_words = [
+        "no_trade",
+        "no trade",
+        "condition fails",
+        "condition failed",
+        "condition 3 fails",
+        "fails",
+        "failed",
+        "not touched",
+        "has not touched",
+        "does not touch",
+        "not enter",
+        "no signal",
+        "invalid",
+        "incomplete",
+        "entry missed",
+        "not valid",
+        "not satisfied",
+        "does not satisfy",
+        "fails for",
+        "condition is missing"
+    ]
+
+    if decision["signal"] in ["BUY", "SELL"]:
+        if any(word in reason_lower for word in bad_words):
+            decision["signal"] = "NO_TRADE"
+            return {
+                "status": "blocked_reason_conflict",
+                "decision": decision
+            }
 
     if decision["signal"] == "NO_TRADE":
         return {
@@ -335,39 +376,39 @@ async def webhook(request: Request):
 
     if decision["signal"] in ["BUY", "SELL"]:
         open_trade = {
-            "id":           trade_id,
-            "symbol":       data.get("symbol"),
-            "side":         decision["signal"],
-            "setup":        decision["setup"],
-            "entry":        decision["entry"],
-            "sl":           decision["sl"],
-            "tp1":          decision["tp1"],
-            "tp2":          decision["tp2"],
-            "tp1_hit":      False,
-            "risk_points":  decision["risk_points"],
-            "reward_points":decision["reward_points"],
-            "zone_key":     decision["zone_key"],
-            "reason":       decision["reason"]
+            "id": trade_id,
+            "symbol": data.get("symbol"),
+            "side": decision["signal"],
+            "setup": decision["setup"],
+            "entry": decision["entry"],
+            "sl": decision["sl"],
+            "tp1": decision["tp1"],
+            "tp2": decision["tp2"],
+            "tp1_hit": False,
+            "risk_points": decision["risk_points"],
+            "reward_points": decision["reward_points"],
+            "zone_key": decision["zone_key"],
+            "reason": decision["reason"]
         }
 
         used_zones.append(decision["zone_key"])
 
         trade_history.insert(0, {
-            "id":           trade_id,
-            "symbol":       data.get("symbol"),
-            "side":         decision["signal"],
-            "setup":        decision["setup"],
-            "entry":        decision["entry"],
-            "sl":           decision["sl"],
-            "tp1":          decision["tp1"],
-            "tp2":          decision["tp2"],
-            "risk_points":  decision["risk_points"],
-            "reward_points":decision["reward_points"],
-            "zone_key":     decision["zone_key"],
-            "result":       "OPEN",
-            "profit_points":0,
-            "created_at":   str(data.get("time")),
-            "reason":       decision["reason"]
+            "id": trade_id,
+            "symbol": data.get("symbol"),
+            "side": decision["signal"],
+            "setup": decision["setup"],
+            "entry": decision["entry"],
+            "sl": decision["sl"],
+            "tp1": decision["tp1"],
+            "tp2": decision["tp2"],
+            "risk_points": decision["risk_points"],
+            "reward_points": decision["reward_points"],
+            "zone_key": decision["zone_key"],
+            "result": "OPEN",
+            "profit_points": 0,
+            "created_at": str(data.get("time")),
+            "reason": decision["reason"]
         })
 
         trade_id += 1
